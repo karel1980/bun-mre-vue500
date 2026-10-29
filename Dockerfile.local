@@ -1,0 +1,22 @@
+ARG BUN_IMAGE=oven/bun:1.4.4-debian
+
+FROM debian:sid-slim AS qemu
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends qemu-user >/dev/null \
+    && cp "$(command -v qemu-aarch64)" /qemu-aarch64
+
+FROM ${BUN_IMAGE}
+COPY --from=qemu /qemu-aarch64 /usr/local/bin/qemu-aarch64
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+ARG ATTEMPTS=5
+ARG TIMEOUT_SECONDS=150
+RUN qemu-aarch64 --version | head -1; qemu-aarch64 /usr/local/bin/bun --version; hangs=0; \
+    for i in $(seq 1 "$ATTEMPTS"); do \
+      start=$(date +%s); \
+      if timeout -k 5 "$TIMEOUT_SECONDS" qemu-aarch64 /usr/local/bin/bun node_modules/vite/bin/vite.js build >/tmp/build.log 2>&1; then r=ok; else r=HANG; hangs=$((hangs + 1)); tail -n 3 /tmp/build.log; fi; \
+      echo "attempt $i: $r after $(($(date +%s) - start))s"; \
+    done; \
+    echo "RESULT: $hangs of $ATTEMPTS attempts hung"; \
+    test "$hangs" -eq 0
